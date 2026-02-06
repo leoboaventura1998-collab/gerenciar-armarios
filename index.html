@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gerenciamento de Armários - Cloud v2.6</title>
+    
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';</script>
+
+    <style>
+        * { box-sizing: border-box; }
+        :root { 
+            --primary-blue: #003366; --primary-yellow: #FFCC00; 
+            --success: #27ae60; --danger: #c0392b; 
+            --maintenance: #3498db; --unknown: #000000; --bg: #f8f9fa; 
+        }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); margin: 0; padding: 0; overflow: hidden; }
+
+        /* Telas de Acesso */
+        #loginScreen, #registerScreen, #resetScreen { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: var(--primary-blue); display: flex; justify-content: center; 
+            align-items: center; z-index: 9999; 
+        }
+        .login-card { 
+            background: white; padding: 40px; border-radius: 20px; width: 420px; 
+            text-align: center; border-top: 10px solid var(--primary-yellow); 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3); 
+        }
+        
+        /* Olho Mágico */
+        .password-wrapper { position: relative; width: 100%; }
+        .password-wrapper input { width: 100%; padding-right: 40px; }
+        .toggle-icon {
+            position: absolute; right: 15px; top: 50%; transform: translateY(-50%);
+            cursor: pointer; opacity: 0.6; font-size: 1.1rem; user-select: none;
+        }
+        .toggle-icon:hover { opacity: 1; }
+
+        /* Layout Principal */
+        #mainApp { display: none; padding: 20px; }
+        .container { display: grid; grid-template-columns: 320px 1fr; gap: 20px; height: 95vh; }
+        .sidebar { background: var(--primary-yellow); padding: 20px; border-radius: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; border: 1px solid #e1b100; }
+        
+        #adminControls { display: flex; flex-direction: column; gap: 15px; width: 100%; }
+
+        .card { background: white; border: none; padding: 15px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+        .stat { background: var(--primary-blue); color: white; padding: 12px; border-radius: 12px; text-align: center; }
+        .stat b { display: block; font-size: 0.95rem; color: var(--primary-yellow); margin-top: 4px; }
+        
+        .main-content { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+        .dashboard { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 20px; flex-shrink: 0; }
+
+        #renderArea { display: flex; flex-direction: row; gap: 25px; overflow-x: auto; padding-bottom: 15px; flex-grow: 1; align-items: flex-start; }
+        .floor-section { background: #fff; padding: 20px; border-radius: 15px; border: 1px solid #ddd; flex: 0 0 auto; }
+        .locker-grid { display: grid; gap: 8px; justify-content: start; background: #f4f4f4; padding: 12px; border-radius: 4px; border: 1px inset #ccc; }
+        
+        .locker { width: 85px; aspect-ratio: 2/3; cursor: pointer; display: flex; flex-direction: column; padding: 6px; border-width: 2.5px; border-style: solid; font-weight: bold; }
+        .free { background: rgba(39, 174, 96, 0.15); border-color: var(--success); color: var(--success); }
+        .rented { background: rgba(192, 57, 43, 0.15); border-color: var(--danger); color: var(--danger); }
+        .maintenance { background: rgba(52, 152, 219, 0.15); border-color: var(--maintenance); color: var(--maintenance); }
+        .unknown { background: rgba(0, 0, 0, 0.15); border-color: var(--unknown); color: var(--unknown); }
+        .l-num { font-size: 0.7rem; border-bottom: 1.5px solid currentColor; text-align: center; margin-bottom: 4px; opacity: 0.8; }
+        .l-info { font-size: 0.55rem; text-align: center; margin-top: auto; text-transform: uppercase; line-height: 1.1; font-weight: 800; }
+
+        .modal-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); display:none; justify-content:center; align-items:center; z-index:1000; }
+        .modal { background:white; width:400px; padding:25px; border-radius:15px; border-top: 8px solid var(--primary-yellow); color: #333; }
+        
+        /* Tabela de Usuários */
+        .user-table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 0.8rem; }
+        .user-table th { background: var(--primary-blue); color: white; padding: 8px; text-align: left; }
+        .user-table td { border-bottom: 1px solid #ddd; padding: 8px; }
+        .action-btn { padding: 4px 8px; font-size: 0.7rem; border-radius: 4px; border: none; cursor: pointer; color: white; margin-right: 5px; }
+        
+        input, button, select { width: 100%; padding: 12px; margin: 5px 0; border-radius: 8px; border: 1px solid #ccc; font-weight: bold; }
+        .btn-blue { background: var(--primary-blue); color: white; border: none; cursor: pointer; }
+        .btn-green { background: var(--success); color: white; border: none; cursor: pointer; }
+        .btn-gray { background: #bdc3c7; color: #333; border: none; cursor: pointer; }
+        .hidden { display: none !important; }
+        .text-link { background: none; border: none; color: var(--primary-blue); font-size: 0.8rem; cursor: pointer; text-decoration: underline; margin: 5px; }
+        
+        .bottom-analytics { background: var(--primary-blue); border-radius: 15px; padding: 20px; margin-top: 15px; display: grid; grid-template-columns: 280px 1fr 220px; gap: 20px; color: white; }
+        .charts-scroll-container { display: flex; flex-direction: row; gap: 20px; overflow-x: auto; padding: 5px; background: rgba(255,255,255,0.05); border-radius: 10px; }
+    </style>
+</head>
+<body>
+
+<div id="loginScreen">
+    <div class="login-card">
+        <h2 style="color: var(--primary-blue); margin-bottom: 20px;">SGA - LOGIN</h2>
+        <input type="text" id="userInput" placeholder="Usuário">
+        <div class="password-wrapper">
+            <input type="password" id="passInput" placeholder="Senha" onkeyup="if(event.key === 'Enter') validateLogin()">
+            <span class="toggle-icon" onclick="togglePassword('passInput', this)">👁️</span>
+        </div>
+        <button class="btn-blue" onclick="validateLogin()">Entrar no Sistema</button>
+        <div style="display: flex; justify-content: space-between; margin-top: 10px;">
+            <button class="text-link" onclick="showRegister()">Criar Acesso</button>
+            <button class="text-link" style="color: #c0392b;" onclick="showReset()">Esqueci a Senha</button>
+        </div>
+        <p id="loginError" style="color: red; font-size: 0.8rem; margin-top: 10px; display: none;"></p>
+    </div>
+</div>
+
+<div id="resetScreen" class="hidden">
+    <div class="login-card">
+        <h2 style="color: var(--primary-blue);">REDEFINIR SENHA</h2>
+        <input type="text" id="resetUser" placeholder="Seu Usuário">
+        <input type="email" id="resetEmail" placeholder="Seu E-mail Cadastrado">
+        <div class="password-wrapper">
+            <input type="password" id="resetPass" placeholder="Nova Senha">
+            <span class="toggle-icon" onclick="togglePassword('resetPass', this)">👁️</span>
+        </div>
+        <button class="btn-green" onclick="handlePasswordReset()">Salvar Nova Senha</button>
+        <button class="btn-gray" onclick="hideReset()">Cancelar</button>
+    </div>
+</div>
+
+<div id="registerScreen" class="hidden">
+    <div class="login-card">
+        <h2 style="color: var(--primary-blue);">NOVO FUNCIONÁRIO</h2>
+        <p style="font-size: 0.75rem; color: #666;">Crie um usuário simples, sem espaços ou símbolos.</p>
+        <input type="text" id="regFullName" placeholder="Nome Completo">
+        <input type="email" id="regEmail" placeholder="E-mail Institucional">
+        <input type="text" id="regUser" placeholder="Usuário (ex: leonardo)">
+        <div class="password-wrapper">
+            <input type="password" id="regPass" placeholder="Criar Senha">
+            <span class="toggle-icon" onclick="togglePassword('regPass', this)">👁️</span>
+        </div>
+        <button class="btn-green" onclick="handleRegister()">Salvar e Criar Acesso</button>
+        <button class="btn-gray" onclick="hideRegister()">Voltar ao Login</button>
+    </div>
+</div>
+
+<div id="userMgmtModal" class="modal-overlay">
+    <div class="modal" style="width: 700px; max-width: 95%;">
+        <h3 style="color: var(--primary-blue);">Gestão de Usuários</h3>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; background: #f0f0f0; padding: 10px; border-radius: 8px;">
+            <input type="text" id="mgmtUser" placeholder="Usuário (ex: ana)">
+            <input type="text" id="mgmtName" placeholder="Nome Completo">
+            <input type="email" id="mgmtEmail" placeholder="E-mail">
+            <div class="password-wrapper">
+                <input type="text" id="mgmtPass" placeholder="Senha">
+            </div>
+            <select id="mgmtRole">
+                <option value="Funcionario">Funcionário</option>
+                <option value="Administrador">Administrador</option>
+            </select>
+            <button class="btn-green" onclick="saveUserMgmt()">💾 Salvar / Atualizar</button>
+        </div>
+
+        <div style="max-height: 300px; overflow-y: auto; margin-top: 15px;">
+            <table class="user-table">
+                <thead>
+                    <tr><th>Usuário</th><th>Nome</th><th>Função</th><th>Ações</th></tr>
+                </thead>
+                <tbody id="userTableBody"></tbody>
+            </table>
+        </div>
+        <button onclick="closeUserMgmt()" class="btn-gray" style="margin-top: 15px;">Fechar</button>
+    </div>
+</div>
+
+<div id="masterAdminModal" class="modal-overlay">
+    <div class="modal">
+        <h3 style="color: var(--primary-blue);">Alterar Admin Mestre</h3>
+        <p style="font-size:0.8rem; color:#666;">Defina o usuário e senha principal do sistema.</p>
+        <input type="text" id="newMasterUser" placeholder="Novo Usuário Admin">
+        <input type="text" id="newMasterName" placeholder="Nome de Exibição">
+        <div class="password-wrapper">
+            <input type="text" id="newMasterPass" placeholder="Nova Senha">
+        </div>
+        <button class="btn-green" onclick="saveMasterAdmin()">Atualizar Credenciais</button>
+        <button class="btn-gray" onclick="document.getElementById('masterAdminModal').style.display='none'">Cancelar</button>
+    </div>
+</div>
+
+<div id="mainApp">
+    <div class="container">
+        <aside class="sidebar">
+            <div style="text-align: center; background: var(--primary-blue); padding: 15px; border-radius: 8px; color: white; border: 2px solid white;">
+                <h3 style="margin: 0; font-size: 0.9rem;">GERENCIAMENTO DE ARMÁRIOS</h3>
+                <span id="userDisplay" style="font-size: 0.65rem; opacity: 0.8;"></span>
+            </div>
+            
+            <div id="adminControls" class="admin-only">
+                <button onclick="openUserMgmt()" style="background: #8e44ad; color: white; border: none; padding: 12px; border-radius: 8px; width: 100%; cursor: pointer;">👥 Gerenciar Equipe</button>
+                
+                <button onclick="openMasterAdmin()" style="background: #2c3e50; color: white; border: none; padding: 12px; border-radius: 8px; width: 100%; cursor: pointer;">🔑 Alterar Senha Mestre</button>
+
+                <div class="card">
+                    <h4>Novo Bloco</h4>
+                    <input type="text" id="fName" placeholder="Nome do Bloco">
+                    <div style="display: flex; gap: 5px;">
+                        <input type="number" id="fHor" placeholder="H">
+                        <input type="number" id="fVer" placeholder="V">
+                    </div>
+                    <button onclick="addFloor()" class="btn-blue">Criar Conjunto</button>
+                </div>
+                <div class="card">
+                    <h4>Importar Alunos</h4>
+                    <input type="file" id="fileInput" accept=".xlsx, .xls, .pdf" onchange="handleFile(this)">
+                    <p id="importCount" style="font-size: 0.75rem; color: var(--success); margin-top: 8px; font-weight: bold;"></p>
+                </div>
+                <button onclick="downloadBackup()" style="background: #2980b9; color: white; font-size: 0.8rem;">📥 Baixar Backup JSON</button>
+            </div>
+
+            <button onclick="logout()" style="background: #7f8c8d; color: white; font-size: 0.8rem;">Sair do Sistema</button>
+        </aside>
+
+        <main class="main-content">
+            <div class="dashboard">
+                <div class="stat">Receita Anual Total<b id="revAnual">R$ 0,00</b></div>
+                <div class="stat">Receita Mensal<b id="revMensal">R$ 0,00</b></div>
+                <div class="stat">Vacância Anual<b id="vacancia">R$ 0,00</b></div>
+                <div class="stat">Receita Bloqueada<b id="valMaint">Mnt: R$ 0,00</b><span id="valUnknown" style="font-size: 0.6rem; opacity:0.8;">Ant: R$ 0,00</span></div>
+                <div class="stat">Taxa Ocupação<b id="ocupRate">0%</b></div>
+            </div>
+
+            <div id="renderArea"></div>
+
+            <div class="bottom-analytics">
+                <div id="generalChartBox" style="text-align: center; border-right: 1px solid rgba(255,255,255,0.2); padding-right: 10px;">
+                    <span style="font-size: 0.7rem; font-weight: bold; color: var(--primary-yellow);">RESUMO GERAL</span>
+                    <div style="height: 140px; margin-top: 5px;"><canvas id="generalChart"></canvas></div>
+                </div>
+                <div class="charts-scroll-container" id="individualChartsArea"></div>
+                <div style="display: flex; flex-direction: column; justify-content: center; gap: 8px;">
+                    <button onclick="printLockerReport()" style="background: white; color: var(--primary-blue);">🖨️ Relatório Geral</button>
+                    <button id="btnReset" onclick="clearEverything()" style="background: var(--danger); color: white; font-size: 0.75rem;" class="admin-only">🗑️ Resetar Sistema</button>
+                </div>
+            </div>
+        </main>
+    </div>
+</div>
+
+<div id="modal" class="modal-overlay">
+    <div class="modal">
+        <h3 id="mTitle" style="color:var(--primary-blue)">Armário</h3>
+        <div id="formActions">
+            <label style="font-size: 0.8rem; font-weight: bold;">BUSCAR ALUNO:</label>
+            <input list="studentList" id="mSearch" placeholder="Nome..." oninput="autoFill()">
+            <datalist id="studentList"></datalist>
+            <input type="text" id="mName" placeholder="Nome" readonly style="background:#f0f0f0">
+            <input type="text" id="mGrade" placeholder="Série" readonly style="background:#f0f0f0">
+            <label style="font-size: 0.7rem;">DATA:</label>
+            <input type="date" id="mDate">
+            <button onclick="confirmRent()" class="btn-green">Locar para Aluno</button>
+            <button onclick="setMaintenance()" style="background: var(--maintenance); color: white;">Manutenção</button>
+            <button onclick="setUnknown()" style="background: black; color: white;">Ocupado (Antigo)</button>
+        </div>
+        <div id="formInfo" class="hidden">
+            <div id="infoBox" style="background:#eee; padding:12px; border-radius:8px; font-size: 0.85rem; margin-bottom: 10px;">
+                <p><strong>Status Atual:</strong> <span id="iStatus"></span></p>
+                <p><strong>Identificação:</strong> <span id="iDetail"></span></p>
+                <p><strong>Série/Turma:</strong> <span id="iGradeView"></span></p>
+                <p><strong>Data de Início:</strong> <span id="iDate"></span></p>
+            </div>
+            <button id="btnContratoPDF" onclick="createContract()" class="btn-blue">Gerar Contrato (PDF)</button>
+            <button onclick="freeLocker()" style="background: var(--danger); color: white;">Liberar</button>
+        </div>
+        <button onclick="closeModal()" style="background:#ccc; color:#333; margin-top: 10px;">Voltar</button>
+    </div>
+</div>
+
+<script>
+    const firebaseConfig = {
+        apiKey: "AIzaSyBzXcWxe7StcCDUU31p8uADTrv_hpD8IEo",
+        authDomain: "armarios-93be0.firebaseapp.com",
+        projectId: "armarios-93be0",
+        storageBucket: "armarios-93be0.firebasestorage.app",
+        messagingSenderId: "681231879444",
+        appId: "1:681231879444:web:c55272b8a23fe76b214601",
+        databaseURL: "https://armarios-93be0-default-rtdb.firebaseio.com/"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+    const dbRef = database.ref('sga_cloud_db_v26');
+    const usersRef = database.ref('sga_cloud_users');
+    const adminRef = database.ref('sga_cloud_master_admin'); // REF para o admin mestre
+
+    let db = { floors: [], students: [], contractCounter: 1 };
+    const PRECO = 280.00;
+    let selectedLocker = null;
+    let currentUserRole = "";
+
+    function togglePassword(id, icon) { const i = document.getElementById(id); if(i.type==="password"){i.type="text"; icon.innerText="🙈";}else{i.type="password"; icon.innerText="👁️";} }
+    function cleanStr(str) { return str.trim().toLowerCase().replace(/[.#$/[\]]/g, ''); }
+
+    // --- GESTÃO DE USUÁRIOS ---
+    function openUserMgmt() { document.getElementById('userMgmtModal').style.display = 'flex'; renderUserList(); }
+    function closeUserMgmt() { document.getElementById('userMgmtModal').style.display = 'none'; }
+    function renderUserList() {
+        usersRef.on('value', (s) => {
+            const tb = document.getElementById('userTableBody'); tb.innerHTML = "";
+            if(s.exists()) s.forEach(c => {
+                const u = c.val();
+                tb.innerHTML += `<tr><td>${u.displayUser||c.key}</td><td>${u.fullName}</td><td>${u.role}</td><td><button class="action-btn" style="background:#f39c12" onclick="editUser('${c.key}','${u.fullName}','${u.email}','${u.password}','${u.role}','${u.displayUser||c.key}')">✏️</button><button class="action-btn" style="background:#c0392b" onclick="deleteUser('${c.key}')">🗑️</button></td></tr>`;
+            });
+        });
+    }
+    function saveUserMgmt() {
+        const u = document.getElementById('mgmtUser').value, n = document.getElementById('mgmtName').value, e = document.getElementById('mgmtEmail').value, p = document.getElementById('mgmtPass').value, r = document.getElementById('mgmtRole').value;
+        if(!u||!n||!p) return alert("Preencha Usuário, Nome e Senha!");
+        usersRef.child(cleanStr(u)).set({fullName:n, email:e, password:p, role:r, displayUser:u}, (err)=>{ if(!err) { alert("Salvo!"); document.getElementById('mgmtUser').value=""; }});
+    }
+    function editUser(k,n,e,p,r,d) { document.getElementById('mgmtUser').value=d; document.getElementById('mgmtName').value=n; document.getElementById('mgmtEmail').value=e; document.getElementById('mgmtPass').value=p; document.getElementById('mgmtRole').value=r; }
+    function deleteUser(k) { if(confirm("Excluir usuário?")) usersRef.child(k).remove(); }
+
+    // --- ALTERAR ADMIN MESTRE [NOVO] ---
+    function openMasterAdmin() { document.getElementById('masterAdminModal').style.display='flex'; }
+    function saveMasterAdmin() {
+        const u = document.getElementById('newMasterUser').value;
+        const n = document.getElementById('newMasterName').value;
+        const p = document.getElementById('newMasterPass').value;
+        if(!u || !p) return alert("Preencha Usuário e Senha!");
+        
+        // Salva as credenciais do mestre no Firebase
+        adminRef.set({ user: cleanStr(u), pass: p, name: n || "Administrador" }, (err) => {
+            if(!err) {
+                alert("Credenciais do Administrador Mestre atualizadas com sucesso!");
+                document.getElementById('masterAdminModal').style.display='none';
+            }
+        });
+    }
+
+    // --- LOGIN (LÓGICA ATUALIZADA) ---
+    function validateLogin() {
+        const uRaw = document.getElementById('userInput').value;
+        const p = document.getElementById('passInput').value;
+        const u = cleanStr(uRaw);
+        const err = document.getElementById('loginError');
+        err.style.display = 'none';
+
+        // 1. Tenta verificar se é o Admin Mestre (Firebase)
+        adminRef.once('value', (snapshot) => {
+            const master = snapshot.val();
+            
+            // Se existir no banco, usa ele. Se não, usa o hardcoded antigo (backup)
+            const isMaster = master ? (u === master.user && p === master.pass) : (uRaw === "Admin" && p === "Adventista2026");
+            const masterName = master ? master.name : "Administrador Mestre";
+
+            if (isMaster) {
+                loginSuccess(masterName, "Administrador");
+            } else {
+                // 2. Se não for mestre, busca nos funcionários
+                usersRef.child(u).once('value', (s) => {
+                    if(s.exists() && s.val().password === p) {
+                        loginSuccess(s.val().fullName, s.val().role);
+                    } else {
+                        err.innerText = "Dados incorretos!"; err.style.display = 'block';
+                    }
+                });
+            }
+        });
+    }
+
+    function loginSuccess(name, role) {
+        currentUserRole = role;
+        document.getElementById('loginScreen').style.display = 'none';
+        document.getElementById('mainApp').style.display = 'block';
+        document.getElementById('userDisplay').innerText = `Perfil: ${role} | ${name}`;
+        if(role === "Funcionario") document.querySelectorAll('.admin-only').forEach(el => el.classList.add('hidden'));
+        startSystem();
+    }
+
+    // --- CADASTRO PÚBLICO (SEM OPÇÃO ADMIN) ---
+    function showRegister() { document.getElementById('registerScreen').classList.remove('hidden'); }
+    function hideRegister() { document.getElementById('registerScreen').classList.add('hidden'); }
+    function handleRegister() {
+        const userRaw = document.getElementById('regUser').value;
+        const pass = document.getElementById('regPass').value;
+        const name = document.getElementById('regFullName').value;
+        const email = document.getElementById('regEmail').value;
+        // Role forçado para funcionário
+        const role = "Funcionario"; 
+
+        if(!userRaw || !pass || !name || !email) return alert("Preencha tudo!");
+        const safeKey = cleanStr(userRaw);
+        usersRef.child(safeKey).once('value', (s) => {
+            if(s.exists()) alert("Usuário já existe.");
+            else usersRef.child(safeKey).set({ fullName: name, email, password: pass, role, displayUser: userRaw }, (e) => { if(!e) { alert("Sucesso!"); hideRegister(); } });
+        });
+    }
+
+    function showReset() { document.getElementById('resetScreen').classList.remove('hidden'); }
+    function hideReset() { document.getElementById('resetScreen').classList.add('hidden'); }
+    function handlePasswordReset() {
+        const u = cleanStr(document.getElementById('resetUser').value);
+        const e = document.getElementById('resetEmail').value.trim();
+        const p = document.getElementById('resetPass').value;
+        if(!u||!e||!p) return alert("Preencha tudo.");
+        usersRef.child(u).once('value', (s) => {
+            if(s.exists() && s.val().email === e) { usersRef.child(u).update({password:p}); alert("Senha alterada!"); hideReset(); }
+            else alert("Dados inválidos.");
+        });
+    }
+
+    function logout() { location.reload(); }
+    function startSystem() { dbRef.on('value', (s) => { if(s.exists()) { db = s.val(); buildStudentDatalist(); render(); document.getElementById('importCount').innerText = `Total: ${db.students?.length||0} alunos`; } }); }
+    function pushData() { dbRef.set(db); }
+    function render() {
+        const area = document.getElementById('renderArea'); area.innerHTML = "";
+        const chartsArea = document.getElementById('individualChartsArea'); chartsArea.innerHTML = "";
+        let counts = { rented: 0, maintenance: 0, free: 0, unknown: 0 };
+        if(!db.floors) db.floors = [];
+        db.floors.forEach((f, fIdx) => {
+            let fCounts = { rented: 0, maintenance: 0, free: 0, unknown: 0 };
+            const section = document.createElement('div'); section.className = 'floor-section';
+            const grid = document.createElement('div'); grid.className = 'locker-grid'; grid.style.gridTemplateColumns = `repeat(${f.h}, 85px)`;
+            f.lockers.forEach(l => {
+                const s = l.status || 'free'; counts[s]++; fCounts[s]++;
+                let dName = s === 'maintenance' ? "MANUT." : (s === 'unknown' ? "OCUPADO" : (s === 'rented' ? l.student.split(' ')[0] : "LIVRE"));
+                grid.innerHTML += `<div class="locker ${s}" onclick="openModal(${fIdx}, ${l.id})"><div class="l-num">${l.num}</div><div class="l-info">${dName}${s === 'rented' ? `<br><span style="font-size:0.45rem;">${l.grade}</span>` : ''}</div></div>`;
+            });
+            section.innerHTML = `<h3 style="margin:0 0 10px 0; font-size:0.9rem;">${f.name}</h3>`; section.appendChild(grid); area.appendChild(section); addFloorChart(f.name, fCounts, chartsArea);
+        });
+        updateDashboard(counts); updateGeneralChart(counts);
+    }
+    function createContract() {
+        const { fIdx, id } = selectedLocker; const l = db.floors[fIdx].lockers.find(x => x.id === id); const doc = new window.jspdf.jsPDF();
+        doc.setDrawColor(0, 51, 102); doc.setLineWidth(0.5); doc.rect(10, 10, 190, 277);
+        doc.setFillColor(255, 204, 0); doc.rect(10.5, 10.5, 189, 39, "F");
+        doc.setFontSize(22); doc.setTextColor(0, 51, 102); doc.setFont("helvetica", "bold"); doc.text("EDUCAÇÃO ADVENTISTA", 105, 26, { align: "center" });
+        doc.setFontSize(14); doc.text("CONTRATO DE LOCAÇÃO DE ARMÁRIO", 105, 36, { align: "center" });
+        doc.setLineWidth(1.2); doc.line(20, 43, 190, 43);
+        doc.setFontSize(10); doc.setTextColor(0); doc.setFont("helvetica", "normal"); doc.text(`Documento Nº: ${db.contractCounter.toString().padStart(6, '0')}`, 185, 48.5, { align: "right" });
+        const drawSec = (t, y) => { doc.setFillColor(242, 242, 242); doc.rect(20, y, 170, 7.5, "F"); doc.setFont("helvetica", "bold"); doc.setTextColor(0, 51, 102); doc.setFontSize(10.5); doc.text(t, 25, y + 5.5); };
+        drawSec("CLÁUSULA PRIMEIRA - DA IDENTIFICAÇÃO", 56);
+        doc.setFont("helvetica", "normal"); doc.setTextColor(0); doc.setFontSize(11);
+        doc.text(`Locatário: ${l.student}`, 20, 74); doc.text(`Série: ${l.grade}`, 20, 83);
+        doc.text(`Início da Locação: ${l.date ? new Date(l.date).toLocaleDateString('pt-BR') : '---'}`, 20, 92);
+        drawSec("CLÁUSULA SEGUNDA - DO OBJETO E VALOR", 105);
+        doc.text(`Bloco: ${db.floors[fIdx].name}`, 20, 123); doc.text(`Armário: ${l.num}`, 20, 132); doc.text(`Valor: R$ 280,00`, 20, 141);
+        drawSec("CLÁUSULA TERCEIRA - DAS CONDIÇÕES DE USO", 155);
+        const termos = ["3.1 Vigência até 31/12/2026.", "3.2 Responsabilidade: Manter o armário em perfeito estado.", "3.3 Cadeado e Chaves: Cada aluno deve providenciar o seu próprio cadeado.", "3.4 Proibições: Vedado materiais inflamáveis ou ilícitos.", "3.5 Valores: A escola não se responsabiliza por eletrônicos.", "3.6 Inspeção: Sujeito a vistoria técnica.", "3.7 Devolução: Entregar limpo e vazio."];
+        termos.forEach((txt, i) => doc.text(txt, 20, 175 + (i * 8.5)));
+        doc.line(25, 250, 95, 250); doc.setFontSize(9); doc.text("Responsável", 60, 255, { align: "center" });
+        doc.line(115, 250, 185, 250); doc.text("Aluno", 150, 255, { align: "center" });
+        doc.line(70, 280, 140, 280); doc.setFont("helvetica", "bold"); doc.text("DIREÇÃO FINANCEIRA", 105, 285, { align: "center" });
+        db.contractCounter++; pushData(); window.open(doc.output('bloburl'), '_blank');
+    }
+    function openModal(f, i) { selectedLocker = { fIdx: f, id: i }; const l = db.floors[f].lockers.find(x => x.id === i); document.getElementById('modal').style.display='flex'; document.getElementById('mDate').valueAsDate=new Date(); document.getElementById('mSearch').value=""; document.getElementById('formActions').className=(!l.status||l.status==='free')?'':'hidden'; document.getElementById('formInfo').className=(!l.status||l.status==='free')?'hidden':''; if(l.status!=='free'){ document.getElementById('iStatus').innerText=l.status.toUpperCase(); document.getElementById('iDetail').innerText=l.student||'-'; document.getElementById('iGradeView').innerText=l.grade||'-'; document.getElementById('iDate').innerText=l.date||'-'; document.getElementById('btnContratoPDF').style.display=(l.status==='rented'?'block':'none'); } }
+    function confirmRent() { const n=document.getElementById('mName').value; if(!n) return alert("Selecione um aluno"); const l=db.floors[selectedLocker.fIdx].lockers.find(x=>x.id===selectedLocker.id); l.status='rented'; l.student=n; l.grade=document.getElementById('mGrade').value; l.date=document.getElementById('mDate').value; pushData(); closeModal(); }
+    function setMaintenance() { db.floors[selectedLocker.fIdx].lockers.find(x=>x.id===selectedLocker.id).status='maintenance'; pushData(); closeModal(); }
+    function setUnknown() { db.floors[selectedLocker.fIdx].lockers.find(x=>x.id===selectedLocker.id).status='unknown'; pushData(); closeModal(); }
+    function freeLocker() { const l=db.floors[selectedLocker.fIdx].lockers.find(x=>x.id===selectedLocker.id); l.status='free'; l.student=""; l.grade=""; l.date=null; pushData(); closeModal(); }
+    function closeModal() { document.getElementById('modal').style.display='none'; }
+    function autoFill() { const s=db.students?.find(x=>x.name===document.getElementById('mSearch').value.toUpperCase()); if(s){document.getElementById('mName').value=s.name; document.getElementById('mGrade').value=s.grade;} }
+    function buildStudentDatalist() { if(db.students) document.getElementById('studentList').innerHTML = db.students.map(s=>`<option value="${s.name}">${s.grade}</option>`).join(''); }
+    function addFloor() { const h=parseInt(document.getElementById('fHor').value), v=parseInt(document.getElementById('fVer').value), n=document.getElementById('fName').value; if(!h||!v||!n) return; const lockers=[]; for(let i=1;i<=h*v;i++) lockers.push({id:Date.now()+i,num:i,status:'free'}); if(!db.floors) db.floors=[]; db.floors.push({name:n,h,v,lockers}); pushData(); }
+    async function handleFile(i) { const f=i.files[0]; if(!f) return; const d=await f.arrayBuffer(), w=XLSX.read(d,{type:'array'}), j=XLSX.utils.sheet_to_json(w.Sheets[w.SheetNames[0]],{header:1}); db.students=[]; j.forEach((r,k)=>{if(k>0&&r[0]&&r[1]) db.students.push({grade:String(r[0]).trim(),name:String(r[1]).trim().toUpperCase()})}); document.getElementById('importCount').innerText=`Total: ${db.students.length} alunos`; pushData(); }
+    function updateDashboard(c) { const r=c.rented*PRECO; document.getElementById('revAnual').innerText=r.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); document.getElementById('revMensal').innerText=(r/12).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); document.getElementById('vacancia').innerText=(c.free*PRECO).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); document.getElementById('valMaint').innerText=`Mnt: ${(c.maintenance*PRECO).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}`; document.getElementById('valUnknown').innerText=`Ant: ${(c.unknown*PRECO).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}`; const t=c.rented+c.free; document.getElementById('ocupRate').innerText=t>0?Math.round((c.rented/t)*100)+"%":"0%"; }
+    function addFloorChart(n,c,ct) { const b=document.createElement('div'); b.className='chart-box'; b.innerHTML=`<span>${n}</span><div style="height:100px;width:130px;"><canvas id="c_${n.replace(/\s/g,'')}"></canvas></div>`; ct.appendChild(b); new Chart(document.getElementById(`c_${n.replace(/\s/g,'')}`).getContext('2d'),{type:'bar',data:{labels:['O','M','L','A'],datasets:[{data:[c.rented,c.maintenance,c.free,c.unknown],backgroundColor:['#e74c3c','#3498db','#2ecc71','#fff']}]},options:{maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#fff',font:{size:8}}},y:{display:false}}}}); }
+    function updateGeneralChart(c) { const ctx=document.getElementById('generalChart').getContext('2d'); if(window.gChart) window.gChart.destroy(); window.gChart=new Chart(ctx,{type:'bar',data:{labels:['OCP','MNT','LVR','ANT'],datasets:[{data:[c.rented,c.maintenance,c.free,c.unknown],backgroundColor:['#e74c3c','#3498db','#2ecc71','#fff']}]},options:{maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#fff'}},y:{ticks:{color:'#fff'},grid:{color:'rgba(255,255,255,0.1)'}}}}}); }
+    function downloadBackup() { const a=document.createElement('a'); a.href="data:text/json;charset=utf-8,"+encodeURIComponent(JSON.stringify(db)); a.download="backup.json"; a.click(); }
+    function clearEverything() { if(confirm("Apagar tudo?")) { db.floors=[]; pushData(); } }
+    function printLockerReport() { const doc=new window.jspdf.jsPDF(); doc.text("Relatório Geral",105,20,{align:"center"}); let d=[]; db.floors.forEach(f=>f.lockers.forEach(l=>{if(l.status!=='free')d.push([f.name,l.num,l.status,l.student])})); doc.autoTable({startY:30,head:[['Bloco','N','St','Aluno']],body:d}); window.open(doc.output('bloburl')); }
+</script>
+</body>
+</html>
